@@ -1,0 +1,3 @@
+
+
+emulates a fictional architecture
