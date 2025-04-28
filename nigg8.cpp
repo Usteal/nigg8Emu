@@ -7,6 +7,245 @@
 #include <stdexcept>
 #include <sstream>
 #include <fstream>
+#include <windows.h>
+
+class SimpleIO {
+    HWND hwnd = nullptr;
+    HINSTANCE hInstance = nullptr;
+    bool graphicsMode;
+    std::string latestInput;
+    POINT mousePos = {0, 0};
+    bool mouseClicked = false;
+    int width = 800, height = 600;
+    bool fullscreen = false;
+    WINDOWPLACEMENT prevPlacement = {};
+    HDC backBufferDC = nullptr;
+    HBITMAP backBufferBitmap = nullptr;
+
+    static SimpleIO* instance;
+
+    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+        if (uMsg == WM_DESTROY) PostQuitMessage(0);
+
+        if (instance && instance->graphicsMode) {
+            switch (uMsg) {
+            case WM_SIZE:
+                instance->resize(LOWORD(lParam), HIWORD(lParam));
+                break;
+            case WM_KEYDOWN:
+                if (wParam == VK_F11) instance->toggle_fullscreen();
+                else instance->latestInput = static_cast<char>(wParam);
+                break;
+            case WM_LBUTTONDOWN:
+                instance->mouseClicked = true;
+                instance->mousePos.x = LOWORD(lParam);
+                instance->mousePos.y = HIWORD(lParam);
+                break;
+            case WM_MOUSEMOVE:
+                instance->mousePos.x = LOWORD(lParam);
+                instance->mousePos.y = HIWORD(lParam);
+                break;
+            case WM_PAINT:
+                instance->paint();
+                ValidateRect(hwnd, nullptr);
+                break;
+            }
+        }
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+
+    void set_mode(bool useGraphics) {
+        this->graphicsMode = useGraphics;
+        clear_screen(); // optional: clear when switching
+    }
+
+    void create_backbuffer() {
+        HDC hdc = GetDC(hwnd);
+        if (backBufferDC) DeleteDC(backBufferDC);
+        if (backBufferBitmap) DeleteObject(backBufferBitmap);
+
+        backBufferDC = CreateCompatibleDC(hdc);
+        backBufferBitmap = CreateCompatibleBitmap(hdc, width, height);
+        SelectObject(backBufferDC, backBufferBitmap);
+        ReleaseDC(hwnd, hdc);
+
+        clear_screen(); // clear newly created backbuffer
+    }
+
+    void paint() {
+        HDC hdc = GetDC(hwnd);
+        BitBlt(hdc, 0, 0, width, height, backBufferDC, 0, 0, SRCCOPY);
+        ReleaseDC(hwnd, hdc);
+    }
+
+    void resize(int w, int h) {
+        width = w;
+        height = h;
+        create_backbuffer();
+    }
+
+    void toggle_fullscreen() {
+        DWORD style = GetWindowLong(hwnd, GWL_STYLE);
+        if (!fullscreen) {
+            MONITORINFO mi = { sizeof(mi) };
+            if (GetWindowPlacement(hwnd, &prevPlacement) && GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+                SetWindowLong(hwnd, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
+                SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                    mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                    SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+                fullscreen = true;
+            }
+        } else {
+            SetWindowLong(hwnd, GWL_STYLE, style | WS_OVERLAPPEDWINDOW);
+            SetWindowPlacement(hwnd, &prevPlacement);
+            SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            fullscreen = false;
+        }
+    }
+
+public:
+    SimpleIO(bool useGraphics) : graphicsMode(useGraphics) {
+        instance = this;
+        if (graphicsMode) {
+            hInstance = GetModuleHandle(nullptr);
+            const wchar_t CLASS_NAME[] = L"SimpleWindowClass";
+
+            WNDCLASS wc = {};
+            wc.lpfnWndProc = WindowProc;
+            wc.hInstance = hInstance;
+            RegisterClass(&wc);
+
+            hwnd = CreateWindowExW(
+                0, CLASS_NAME, L"SimpleIO Window",
+                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, width, height,
+                nullptr, nullptr, hInstance, nullptr
+            );
+            ShowWindow(hwnd, SW_SHOW);
+            UpdateWindow(hwnd);
+            create_backbuffer();
+        }
+    }
+
+    ~SimpleIO() {
+        if (graphicsMode) {
+            if (backBufferDC) DeleteDC(backBufferDC);
+            if (backBufferBitmap) DeleteObject(backBufferBitmap);
+            if (hwnd) DestroyWindow(hwnd);
+        }
+    }
+
+    void print(const std::string& text) {
+        if (graphicsMode) {
+            TextOutA(backBufferDC, 10, 10, text.c_str(), (int)text.size());
+            paint();
+        } else {
+            std::cout << text;
+        }
+    }
+
+    std::string input() {
+        if (graphicsMode) {
+            latestInput.clear();
+            while (latestInput.empty()) {
+                MSG msg;
+                if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
+            }
+            std::string res = latestInput;
+            latestInput.clear();
+            return res;
+        } else {
+            std::string s;
+            std::getline(std::cin, s);
+            return s;
+        }
+    }
+
+    void draw_rect(int x, int y, int w, int h, COLORREF color) {
+        if (graphicsMode) {
+            HBRUSH brush = CreateSolidBrush(color);
+            RECT rect = { x, y, x + w, y + h };
+            FillRect(backBufferDC, &rect, brush);
+            DeleteObject(brush);
+            paint();
+        }
+    }
+
+    void draw_circle(int x, int y, int r, COLORREF color) {
+        if (graphicsMode) {
+            HBRUSH brush = CreateSolidBrush(color);
+            HBRUSH oldBrush = (HBRUSH)SelectObject(backBufferDC, brush);
+            Ellipse(backBufferDC, x - r, y - r, x + r, y + r);
+            SelectObject(backBufferDC, oldBrush);
+            DeleteObject(brush);
+            paint();
+        }
+    }
+
+    void color_text(const std::string& text, COLORREF color, int x, int y) {
+        if (graphicsMode) {
+            SetTextColor(backBufferDC, color);
+            SetBkMode(backBufferDC, TRANSPARENT);
+            TextOutA(backBufferDC, x, y, text.c_str(), (int)text.size());
+            paint();
+        }
+    }
+
+    void clear_screen(COLORREF color = RGB(255, 255, 255)) {
+        if (graphicsMode) {
+            HBRUSH brush = CreateSolidBrush(color);
+            RECT rect = { 0, 0, width, height };
+            FillRect(backBufferDC, &rect, brush);
+            DeleteObject(brush);
+            paint();
+        } else {
+            system("cls");
+        }
+    }
+
+    void draw_line(int x1, int y1, int x2, int y2, COLORREF color) {
+        if (graphicsMode) {
+            HPEN pen = CreatePen(PS_SOLID, 1, color);
+            HPEN oldPen = (HPEN)SelectObject(backBufferDC, pen);
+
+            MoveToEx(backBufferDC, x1, y1, nullptr);
+            LineTo(backBufferDC, x2, y2);
+
+            SelectObject(backBufferDC, oldPen);
+            DeleteObject(pen);
+            paint();
+        }
+    }
+
+    bool mouse_clicked() {
+        if (graphicsMode) {
+            bool clicked = mouseClicked;
+            mouseClicked = false;
+            return clicked;
+        }
+        return false;
+    }
+
+    POINT get_mouse_pos() {
+        return mousePos;
+    }
+
+    void message_loop() {
+        if (graphicsMode) {
+            MSG msg;
+            while (GetMessage(&msg, nullptr, 0, 0)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+        }
+    }
+};
+
+SimpleIO* SimpleIO::instance = nullptr;
+SimpleIO io(false);
 
 std::vector<uint8_t> get_program(const std::string& filepath) {
     std::vector<uint8_t> program;
@@ -117,8 +356,38 @@ private:
                 uint8_t mode = memory[pc++];
                 uint8_t data = memory[pc++];
                 uint8_t port = memory[pc++];
-                uint8_t value = fetch_operand(mode, data, port);  // Fetch value based on mode
-                std::cout << static_cast<char>(value);  // Output value as a character
+                uint8_t value = fetch_operand(mode, data, port);
+                std::cout << static_cast<char>(value); // TODO: use SimpleIO
+                const uint8_t PORT_PRINT        = 0x00;
+                const uint8_t PORT_DRAW_RECT    = 0x01;
+                const uint8_t PORT_DRAW_CIRCLE  = 0x02;
+                const uint8_t PORT_DRAW_LINE    = 0x03;
+                
+                switch (port) {
+                    case PORT_PRINT:
+                    {
+                        std::string s(1, (char)data);
+                        io.print(s);
+                        break;
+                    }
+                    case PORT_DRAW_RECT:
+                    {
+                        io.draw_rect(50, 50, data, data, RGB(0, 0, 255));
+                        break;
+                    }
+                    case PORT_DRAW_CIRCLE:
+                    {
+                        io.draw_circle(100, 100, data, RGB(255, 0, 0));
+                        break;
+                    }
+                    case PORT_DRAW_LINE:
+                    {
+                        io.draw_line(10, 10, 10 + data, 10 + data, RGB(0, 255, 0));
+                        break;
+                    }
+                }
+                
+
                 break;
             }
 
@@ -127,7 +396,7 @@ private:
                 uint8_t dest = memory[pc++];
                 uint8_t port = memory[pc++];
                 uint8_t value;
-                std::cin >> value;
+                std::cin >> value; // TODO: use SimpleIO
                 store_operand(mode, dest, value);
                 break;
             }
@@ -213,7 +482,7 @@ private:
                 break;
             }
 
-            case 0x0f: {
+            case 0x0f: { // (unassigned)(uninmplemented) int
                 break;
             }
 
