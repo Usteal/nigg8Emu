@@ -1,5 +1,3 @@
 # Nigg8 Emulator
 
-emulates a fictional architecture
-
-Building this soon
+emulates an architure im building
