@@ -352,7 +352,7 @@ private:
             case 0x00: // nop
                 break;
 
-            case 0x01: { // out
+            case 0x01: { // out todo: make this myltiple opps
                 uint8_t mode = memory[pc++];
                 uint8_t data = memory[pc++];
                 uint8_t port = memory[pc++];
