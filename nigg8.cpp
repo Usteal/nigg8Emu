@@ -9,7 +9,7 @@
 #include <fstream>
 #include <windows.h>
 
-class SimpleIO {
+class SimpleIO { // todo: make it grid based
     HWND hwnd = nullptr;
     HINSTANCE hInstance = nullptr;
     bool graphicsMode;
