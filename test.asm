@@ -1,2 +1,4 @@
 start:
+
+end:
 hlt
